@@ -30,6 +30,7 @@ Le serveur héberge une arène compétitive : plusieurs bots (potentiellement de
 ### Connexion
 
 1. Se connecter en WebSocket à `ws://<host>:4000/ws`
+  - https://agencies-parent-bacteria-soonest.trycloudflare.com/ 
 2. Le serveur envoie immédiatement un message `Hello`
 3. Répondre avec `Register` pour rejoindre l'arène
 
