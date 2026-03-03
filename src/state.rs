@@ -107,11 +107,12 @@ impl GameState {
                 self.obstacles = obstacles.clone();
                 self.resources = resources
                     .iter()
-                    .map(|(resource_id, x, y, expires_at)| ResourceInfo {
+                    .map(|(resource_id, x, y, expires_at, value)| ResourceInfo {
                         resource_id: *resource_id,
                         x: *x,
                         y: *y,
                         expires_at: *expires_at,
+                        value: *value,
                     })
                     .collect();
                 self.agents = agents
