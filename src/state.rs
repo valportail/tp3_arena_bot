@@ -98,7 +98,9 @@ impl GameState {
                 self.position = agents
                     .iter()
                     .filter(|(id, _, _, _, _, _)| *id == self.agent_id)
-                    .map(|(_, _, _, _, x, y)| (*x, *y)).last().unwrap_or((0, 0));
+                    .map(|(_, _, _, _, x, y)| (*x, *y))
+                    .last()
+                    .unwrap_or((0, 0));
                 self.map_size = (*width, *height);
                 self.goal = *goal;
                 self.obstacles = obstacles.clone();
@@ -122,7 +124,9 @@ impl GameState {
                         y: *y,
                     })
                     .collect();
-                agents.iter().for_each(|(_, _, team, score, _, _)| { self.team_scores.insert(team.clone(), *score); });
+                agents.iter().for_each(|(_, _, team, score, _, _)| {
+                    self.team_scores.insert(team.clone(), *score);
+                });
             }
             _ => {}
         }
