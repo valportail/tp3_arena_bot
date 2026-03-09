@@ -21,6 +21,11 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 use uuid::Uuid;
+use std::sync::Arc;
+use std::sync::mpsc;
+use std::thread;
+use std::sync::Mutex;
+use crate::pow;
 
 /// Requête de minage envoyée aux threads mineurs.
 #[derive(Debug, Clone)]
@@ -53,6 +58,11 @@ pub struct MineResult {
 // pub struct MinerPool {
 //     ...
 // }
+
+pub struct MinerPool {
+    sender: std::sync::mpsc::Sender<MineRequest>,
+    receiver: std::sync::mpsc::Receiver<MineResult>
+}
 
 // TODO: Implémenter MinerPool.
 //
@@ -99,3 +109,60 @@ pub struct MineResult {
 //         todo!()
 //     }
 // }
+
+impl MinerPool {
+    pub fn new(n: usize) -> Self {
+        let (request_tx, request_rx) = mpsc::channel::<MineRequest>();
+        let (result_tx, result_rx) = mpsc::channel::<MineResult>();
+
+        let request_rx = Arc::new(Mutex::new(request_rx));
+
+        for _ in 0..n {
+            let request_rx = Arc::clone(&request_rx);
+            let result_tx = result_tx.clone();
+
+            thread::spawn(move || {
+                loop {
+                    let reception = {
+                        let lock = request_rx.lock().unwrap();
+                        lock.recv()
+                    };
+
+                    match reception {
+                        Ok(request) => {
+                            if let Some(p_nonce) = 
+                                pow::pow_search(
+                                    request.seed,
+                                    request.tick,
+                                    request.resource_id,
+                                    request.agent_id,
+                                    request.target_bits,
+                                    rand::random::<u64>(),
+                                    100000,
+                                ) {
+                                    let result = MineResult { tick: request.tick, resource_id: request.resource_id, nonce: p_nonce};
+                                    result_tx.send(result).unwrap();
+                                }
+                        },
+                        Err(_) => break,
+                    }
+                }
+            });
+        }
+
+        MinerPool
+        {
+            sender: request_tx,
+            receiver: result_rx,
+        }
+    }
+
+    pub fn submit(&self, request: MineRequest) {
+        self.sender.send(request).unwrap();
+    }
+
+    pub fn try_rcv(&self) -> Option<MineResult> {
+        Some(self.receiver.recv().unwrap())
+    }
+
+}
