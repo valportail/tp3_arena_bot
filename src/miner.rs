@@ -162,6 +162,10 @@ impl MinerPool {
     }
 
     pub fn try_rcv(&self) -> Option<MineResult> {
-        Some(self.receiver.recv().unwrap())
+        if let Ok(result) = self.receiver.try_recv() {
+            return Some(result);
+        }
+
+        None
     }
 }

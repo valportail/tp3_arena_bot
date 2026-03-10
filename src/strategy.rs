@@ -45,6 +45,8 @@ impl Strategy for NearestResourceStrategy {
             return None;
         };
 
+        println!("[#] Coordonnées de la ressource la plus proche : {0}, {1}", nearest_resource.x, nearest_resource.y);
+
         // 2. Calculer la direction (dx, dy) vers cette ressource :
         //    - Si resource.x > position.x → dx = 1
         //    - Si resource.x < position.x → dx = -1
@@ -53,20 +55,8 @@ impl Strategy for NearestResourceStrategy {
         //
         //    Indice : utilisez i16 pour les calculs puis .signum() puis cast en i8
 
-        let dx = if nearest_resource.x > state.position.0 {
-            1
-        } else if nearest_resource.x < state.position.0 {
-            -1
-        } else {
-            0
-        };
-        let dy = if nearest_resource.y > state.position.1 {
-            1
-        } else if nearest_resource.y < state.position.1 {
-            -1
-        } else {
-            0
-        };
+        let dx = i16::signum(nearest_resource.x as i16 - state.position.0 as i16) as i8;
+        let dy = i16::signum(nearest_resource.y as i16 - state.position.1 as i16) as i8;
 
         // 3. Retourner Some((dx, dy)), ou None si aucune ressource
         Some((dx, dy))

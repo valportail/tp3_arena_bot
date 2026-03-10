@@ -110,8 +110,8 @@ fn main() {
     // Indice : il faut un channel pour recevoir les messages du thread lecteur
     // car la WebSocket ne peut pas être partagée entre threads.
 
-    let (tx_server, rx_server) = std::sync::mpsc::channel::<ServerMsg>();
-    let (tx_client, rx_client) = std::sync::mpsc::channel::<ClientMsg>();
+    let (tx, rx) = std::sync::mpsc::channel::<ServerMsg>();
+    let (tc, rc) = std::sync::mpsc::channel::<ClientMsg>();
 
     // Le thread lecteur lit les messages, met à jour le state, et forward
     // les messages importants via le channel.
@@ -119,18 +119,23 @@ fn main() {
     let shared_state_clone = Arc::clone(&shared_state);
     thread::spawn(move || {
         loop {
-            // Envoyer les ClientMsg au serveur
-            while let Ok(msg) = rx_client.try_recv() {
-                send_client_msg(&mut ws, &msg);
-            }
-
             // Lire les ServerMsg reçus depuis le serveur
-            while let Some(msg) = read_server_msg(&mut ws) {
+            if let Some(msg) = read_server_msg(&mut ws) {
                 // Mettre à jour le SharedState
                 shared_state_clone.lock().unwrap().update(&msg);
 
                 // Transmettre les messages importants via le channel
-                tx_server.send(msg).unwrap();
+                tx.send(msg).unwrap();
+            }
+
+            // Envoyer les ClientMsg au serveur
+            if let Ok(msg) = rc.try_recv() {
+                match msg {
+                    ClientMsg::Move { dx, dy } => println!("[#] Envoi du movement {dx}, {dy}"),
+                    ClientMsg::PowSubmit { tick: _, resource_id, nonce } => println!("[#] Envoi du nonce {nonce} pour la ressource {resource_id}"),
+                    _ => {}
+                }
+                send_client_msg(&mut ws, &msg);
             }
         }
     });
@@ -143,7 +148,7 @@ fn main() {
         //    - Win → afficher et quitter
         //    - Autres → déjà traités par le thread lecteur
 
-        if let Ok(msg) = rx_server.try_recv() {
+        if let Ok(msg) = rx.try_recv() {
             match msg {
                 ServerMsg::Error { message } => {
                     eprintln!("[!] Une erreur est survenue : {message}")
@@ -188,32 +193,36 @@ fn main() {
                 }
                 _ => {}
             }
-        }
-
-        // 2. Vérifier si le MinerPool a trouvé un nonce
-        //    → envoyer ClientMsg::PowSubmit
-
-        if let Some(result) = miner_pool.try_rcv() {
-            let _ = tx_client.send(ClientMsg::PowSubmit {
-                tick: result.tick,
-                resource_id: result.resource_id,
-                nonce: result.nonce,
-            });
-        }
-
-        // 3. Consulter la stratégie pour le prochain mouvement
-        //    → envoyer ClientMsg::Move
-
-        {
-            let state_reader = shared_state.lock().unwrap();
-            if let Some((dx, dy)) = strategy.next_move(&state_reader) {
-                let _ = tx_client.send(ClientMsg::Move { dx, dy });
+            
+            // 2. Vérifier si le MinerPool a trouvé un nonce
+            //    → envoyer ClientMsg::PowSubmit
+    
+            println!("[?] Vérifie si le MinerPool a trouvé un nonce");
+            if let Some(result) = miner_pool.try_rcv() {
+                println!("[#] Nonce trouvé, envoi du résultat");
+                tc.send(ClientMsg::PowSubmit {
+                    tick: result.tick,
+                    resource_id: result.resource_id,
+                    nonce: result.nonce,
+                }).unwrap();
             }
+    
+            // 3. Consulter la stratégie pour le prochain mouvement
+            //    → envoyer ClientMsg::Move
+    
+            println!("[?] Consulte la stratégie pour déterminer le prochain mouvement");
+            {
+                let state_reader = shared_state.lock().unwrap();
+                if let Some((dx, dy)) = strategy.next_move(&state_reader) {
+                    tc.send(ClientMsg::Move { dx, dy }).unwrap();
+                }
+            }
+    
+            // 4. Dormir un peu
+    
+            thread::sleep(Duration::from_millis(50));
         }
 
-        // 4. Dormir un peu
-
-        thread::sleep(Duration::from_millis(50));
     }
 }
 
