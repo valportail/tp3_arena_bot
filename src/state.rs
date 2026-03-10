@@ -130,6 +130,17 @@ impl GameState {
                     self.team_scores.insert(team.clone(), *score);
                 });
             }
+            ServerMsg::PowResult {
+                resource_id,
+                winner: _,
+            } => {
+                self.resources = self
+                    .resources
+                    .iter()
+                    .filter(|r| r.resource_id == *resource_id)
+                    .map(|r| r.clone())
+                    .collect();
+            }
             _ => {}
         }
     }

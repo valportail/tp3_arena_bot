@@ -21,11 +21,13 @@ use uuid::Uuid;
 
 use protocol::{ClientMsg, ServerMsg};
 
+use crate::miner::MineRequest;
+
 // ─── Configuration ──────────────────────────────────────────────────────────
 
 const SERVER_URL: &str = "ws://127.0.0.1:4004/ws";
-const TEAM_NAME: &str = "mon_equipe";
-const AGENT_NAME: &str = "bot_1";
+const TEAM_NAME: &str = "Isiciné";
+const AGENT_NAME: &str = "Inspecteur Gerrick";
 const NUM_MINERS: usize = 4;
 
 fn main() {
@@ -91,41 +93,128 @@ fn main() {
     //  depuis le thread lecteur.
     // ─────────────────────────────────────────────────────────────────────
 
-    // TODO: Partie 1 — Créer le SharedState (voir state.rs)
+    // Partie 1 — Créer le SharedState (voir state.rs)
 
-    // TODO: Partie 2 — Créer le MinerPool (voir miner.rs)
+    let shared_state = state::new_shared_state(agent_id);
 
-    // TODO: Partie 3 — Créer la stratégie (voir strategy.rs)
+    // Partie 2 — Créer le MinerPool (voir miner.rs)
 
-    // TODO: Partie 4 — Lancer le thread lecteur WS
-    //
+    let miner_pool = miner::MinerPool::new(NUM_MINERS);
+
+    // Partie 3 — Créer la stratégie (voir strategy.rs)
+
+    let strategy: Box<dyn strategy::Strategy> = Box::new(strategy::NearestResourceStrategy);
+
+    // Partie 4 — Lancer le thread lecteur WS
+
     // Indice : il faut un channel pour recevoir les messages du thread lecteur
     // car la WebSocket ne peut pas être partagée entre threads.
-    //
-    // let (tx, rx) = std::sync::mpsc::channel::<ServerMsg>();
-    //
+
+    let (tx_server, rx_server) = std::sync::mpsc::channel::<ServerMsg>();
+    let (tx_client, rx_client) = std::sync::mpsc::channel::<ClientMsg>();
+
     // Le thread lecteur lit les messages, met à jour le state, et forward
     // les messages importants via le channel.
 
-    // TODO: Partie 5 — Boucle principale
-    //
-    // loop {
-    //     // 1. Lire les messages du thread lecteur (rx.try_recv())
-    //     //    - PowChallenge → envoyer au MinerPool
-    //     //    - Win → afficher et quitter
-    //     //    - Autres → déjà traités par le thread lecteur
-    //
-    //     // 2. Vérifier si le MinerPool a trouvé un nonce
-    //     //    → envoyer ClientMsg::PowSubmit
-    //
-    //     // 3. Consulter la stratégie pour le prochain mouvement
-    //     //    → envoyer ClientMsg::Move
-    //
-    //     // 4. Dormir un peu
-    //     thread::sleep(Duration::from_millis(50));
-    // }
+    let shared_state_clone = Arc::clone(&shared_state);
+    thread::spawn(move || {
+        loop {
+            // Envoyer les ClientMsg au serveur
+            while let Ok(msg) = rx_client.try_recv() {
+                send_client_msg(&mut ws, &msg);
+            }
 
-    println!("[!] TODO: implémenter la boucle principale");
+            // Lire les ServerMsg reçus depuis le serveur
+            while let Some(msg) = read_server_msg(&mut ws) {
+                // Mettre à jour le SharedState
+                shared_state_clone.lock().unwrap().update(&msg);
+
+                // Transmettre les messages importants via le channel
+                tx_server.send(msg).unwrap();
+            }
+        }
+    });
+
+    // Partie 5 — Boucle principale
+
+    loop {
+        // 1. Lire les messages du thread lecteur (rx.try_recv())
+        //    - PowChallenge → envoyer au MinerPool
+        //    - Win → afficher et quitter
+        //    - Autres → déjà traités par le thread lecteur
+
+        if let Ok(msg) = rx_server.try_recv() {
+            match msg {
+                ServerMsg::Error { message } => {
+                    eprintln!("[!] Une erreur est survenue : {message}")
+                }
+                ServerMsg::Mining {
+                    agent_id,
+                    resource_id,
+                    on,
+                } => match on {
+                    true => println!(
+                        "[*] L'agent {agent_id} commence à miner la ressource {resource_id}"
+                    ),
+                    false => {
+                        println!("[*] L'agent {agent_id} cesse de miner la ressource {resource_id}")
+                    }
+                },
+                ServerMsg::PowChallenge {
+                    tick,
+                    seed,
+                    resource_id,
+                    x: _,
+                    y: _,
+                    target_bits,
+                    expires_at: _,
+                    value: _,
+                } => miner_pool.submit(MineRequest {
+                    seed,
+                    tick,
+                    resource_id,
+                    agent_id,
+                    target_bits,
+                }),
+                ServerMsg::PowResult {
+                    resource_id,
+                    winner,
+                } => {
+                    println!("[*] La ressource {resource_id} a été remportée par l'agent {winner}")
+                }
+                ServerMsg::Win { team } => {
+                    println!("[*] Victoire de l'équipe {team} !");
+                    break;
+                }
+                _ => {}
+            }
+        }
+
+        // 2. Vérifier si le MinerPool a trouvé un nonce
+        //    → envoyer ClientMsg::PowSubmit
+
+        if let Some(result) = miner_pool.try_rcv() {
+            let _ = tx_client.send(ClientMsg::PowSubmit {
+                tick: result.tick,
+                resource_id: result.resource_id,
+                nonce: result.nonce,
+            });
+        }
+
+        // 3. Consulter la stratégie pour le prochain mouvement
+        //    → envoyer ClientMsg::Move
+
+        {
+            let state_reader = shared_state.lock().unwrap();
+            if let Some((dx, dy)) = strategy.next_move(&state_reader) {
+                let _ = tx_client.send(ClientMsg::Move { dx, dy });
+            }
+        }
+
+        // 4. Dormir un peu
+
+        thread::sleep(Duration::from_millis(50));
+    }
 }
 
 // ─── Fonctions utilitaires (fournies) ───────────────────────────────────────
@@ -147,5 +236,6 @@ fn read_server_msg(ws: &mut WsStream) -> Option<ServerMsg> {
 /// Sérialise et envoie un message au serveur.
 fn send_client_msg(ws: &mut WsStream, msg: &ClientMsg) {
     let json = serde_json::to_string(msg).expect("sérialisation échouée");
-    ws.send(Message::Text(json.into())).expect("envoi WS échoué");
+    ws.send(Message::Text(json.into()))
+        .expect("envoi WS échoué");
 }
